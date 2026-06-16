@@ -1,0 +1,15 @@
+[Unit]
+Description=patdilet.dev Next.js Web App
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/docker exec -w /opt/data/patdilet hermes npx next start --port 3003
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

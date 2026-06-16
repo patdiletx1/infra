@@ -1,0 +1,108 @@
+# HTTP for IP access
+http://91.99.157.147 {
+	handle /api/* {
+		reverse_proxy localhost:3000
+	}
+	handle /health {
+		reverse_proxy localhost:3000
+	}
+	handle {
+		reverse_proxy localhost:3001 {
+			header_up Host 91.99.157.147
+		}
+	}
+}
+
+# HTTPS for quotedme.app
+quotedme.app {
+	handle /api/* {
+		reverse_proxy localhost:3000
+	}
+	handle /health {
+		reverse_proxy localhost:3000
+	}
+	handle {
+		reverse_proxy localhost:3001
+	}
+}
+
+# HTTPS for ctrlz.app
+ctrlz.app {
+	root * /var/www/ctrlz/viewer
+
+	header /phone/sw.js Service-Worker-Allowed /phone/
+
+	header /phone/index.html {
+		Cache-Control "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0"
+		Pragma "no-cache"
+		Expires "0"
+	}
+	header /index.html {
+		Cache-Control "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0"
+		Pragma "no-cache"
+		Expires "0"
+	}
+
+	@phoneNoSlash {
+		path /phone
+		not path /phone/*
+	}
+	redir @phoneNoSlash /phone/ 301
+
+	@appNoSlash {
+		path /app
+		not path /app/*
+	}
+	redir @appNoSlash /app/ 301
+
+	handle /api/* {
+		reverse_proxy localhost:5000
+	}
+
+	handle_path /app/* {
+		reverse_proxy localhost:5002
+	}
+
+	handle_path /lib/* {
+		root * /var/www/ctrlz/lib
+		file_server
+	}
+
+	handle_path /phone/* {
+		root * /var/www/ctrlz/phone
+		file_server
+	}
+
+	handle_path /live/* {
+		try_files {path} /index.html
+		file_server
+	}
+
+	handle {
+		try_files {path} /index.html
+		file_server
+	}
+}
+
+# DeliveryCheck AI — Agente de verificación de pedidos
+deliverycheck.ctrlz.app {
+	handle /api/* {
+		reverse_proxy localhost:8000
+	}
+	handle /health {
+		reverse_proxy localhost:8000
+	}
+	handle {
+		reverse_proxy localhost:3002
+	}
+}
+
+# Job Tracker Dashboard
+jobs.patdilet.dev {
+	reverse_proxy localhost:5003
+}
+
+# Patricio Díaz — Personal site
+patdilet.dev {
+	reverse_proxy localhost:3003
+}

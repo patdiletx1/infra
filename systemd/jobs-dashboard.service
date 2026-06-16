@@ -1,0 +1,15 @@
+[Unit]
+Description=Job Tracker Dashboard (Flask)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/docker exec -e PORT=5003 hermes /opt/hermes/.venv/bin/python3 /opt/data/home/quotedme_scraper/dashboard.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
