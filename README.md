@@ -2,6 +2,38 @@
 
 Infraestructura como código para el VPS `quotedme-app` en Hetzner CPX32 (4 vCPU, 8 GB RAM, 160 GB NVMe, Ubuntu 24.04).
 
+---
+
+## ⚡ Guía rápida — lo que necesito recordar
+
+```bash
+# Conectarme al VPS
+ssh root@91.99.157.147
+
+# Ver estado de todo
+docker ps --format "table {{.Names}}\t{{.Status}}"
+systemctl is-active caddy jobs-dashboard patdilet-web
+
+# Actualizar Hermes (git pull + rebuild)
+cd /opt/hermes && git pull && HERMES_UID=$(id -u) HERMES_GID=$(id -g) docker compose up -d --build
+
+# Backup de datos (desde mi Mac)
+cd '/Volumes/M2 SSD/Repos/PDL/infra' && bash backup.sh
+
+# Migrar a server nuevo
+# 1. git clone https://github.com/patdiletx1/infra.git /opt/infra
+# 2. bash setup.sh                                  ← configura todo desde cero
+# 3. scp backups/<fecha>/* root@nuevo-ip:...         ← restaurar datos
+# 4. Reiniciar servicios
+```
+
+| Script | Desde | Qué hace |
+|--------|-------|----------|
+| `setup.sh` | Server nuevo | Instala Docker, Caddy, clona repos, copia configs, inicia todo |
+| `backup.sh` | Mi Mac | Descarga state.db, Postgres, WhatsApp sessions, .env — **todo lo necesario para migrar** |
+
+---
+
 ## Servicios
 
 | Servicio | Dominio | Tipo | Puerto |
@@ -40,36 +72,147 @@ infra/
     └── .env.example
 ```
 
-## Cómo usar
+## Operaciones diarias
 
-### Setup inicial en un server nuevo
-
-```bash
-# 1. Clonar este repo
-git clone git@github.com:patdiletx1/infra.git /opt/infra
-
-# 2. Copiar los .env con secretos reales (NUNCA en git)
-#    desde tu backup local al server
-
-# 3. Ejecutar setup
-cd /opt/infra && bash setup.sh
-```
-
-### Actualizar configs desde el server actual
+### Conectarme al VPS
 
 ```bash
 ssh root@91.99.157.147
-cd /opt/infra
-git pull
-# Aplicar cambios (copiar configs, recargar systemd, etc.)
 ```
 
-### Agregar un servicio nuevo
+### Ver estado de todo
 
-1. Crear carpeta `nuevo-servicio/` con su config
-2. Agregar entrada en Caddyfile
-3. Agregar pasos en `setup.sh`
-4. `git commit && git push`
+```bash
+# Contenedores Docker
+docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+
+# Servicios systemd
+systemctl is-active caddy jobs-dashboard patdilet-web
+
+# Logs de Hermes
+docker logs hermes --tail 50
+
+# Logs del dashboard
+journalctl -u jobs-dashboard --no-pager -n 20
+
+# Memoria
+free -h && docker stats hermes --no-stream
+```
+
+### Actualizar Hermes Agent
+
+```bash
+ssh root@91.99.157.147
+cd /opt/hermes
+
+# Ver si hay updates
+git fetch origin && git rev-list --count HEAD..origin/main
+
+# Actualizar
+git pull origin main
+HERMES_UID=$(id -u) HERMES_GID=$(id -g) docker compose up -d --build
+
+# Post-update: reinstalar Flask (el venv se recrea)
+docker exec hermes /usr/local/bin/uv pip install flask
+systemctl restart jobs-dashboard
+```
+
+### Agregar o modificar un servicio
+
+1. Editar el archivo en este repo (`caddy/Caddyfile`, `systemd/foo.service`, etc.)
+2. `git commit && git push`
+3. En el VPS: `cd /opt/infra && git pull`
+4. Copiar configs a destino y recargar:
+   ```bash
+   cp caddy/Caddyfile /etc/caddy/ && systemctl reload caddy      # si cambió Caddy
+   cp systemd/foo.service /etc/systemd/system/ && systemctl daemon-reload && systemctl restart foo  # si cambió systemd
+   cd /opt/hermes && docker compose up -d --build                 # si cambió docker-compose
+   ```
+
+### Hacer backup de datos
+
+```bash
+# Desde mi Mac
+cd '/Volumes/M2 SSD/Repos/PDL/infra'
+bash backup.sh
+# Los datos quedan en ./backups/<fecha>/
+```
+
+---
+
+## Migrar a otro server (guía completa)
+
+### Paso 1: Conseguir un VPS nuevo
+
+- Hetzner CPX32 o similar (4 vCPU, 8 GB RAM)
+- Ubuntu 24.04
+- Apuntar DNS al nuevo IP (todos los dominios)
+
+### Paso 2: Setup inicial
+
+```bash
+# En el server nuevo, como root:
+git clone https://github.com/patdiletx1/infra.git /opt/infra
+
+# Copiar los .env con secretos reales desde backup local
+# (usando scp desde mi Mac)
+scp backups/<fecha>/hermes.env root@<nuevo-ip>:~/.hermes/.env
+scp backups/<fecha>/ctrlz.tar.gz root@<nuevo-ip>:/opt/
+# ... etc.
+
+# Ejecutar setup
+cd /opt/infra && bash setup.sh
+```
+
+### Paso 3: Restaurar datos
+
+```bash
+# state.db — crítico: historial de conversaciones, memoria, skills
+scp backups/<fecha>/hermes-state.db root@<nuevo-ip>:~/.hermes/state.db
+
+# quotedme_scraper — jobs.db del dashboard
+scp backups/<fecha>/quotedme_scraper.tar.gz root@<nuevo-ip>:/tmp/
+ssh root@<nuevo-ip> "tar xzf /tmp/quotedme_scraper.tar.gz -C ~/.hermes/home/"
+
+# WhatsApp sessions
+scp backups/<fecha>/openwa-sessions.tar.gz root@<nuevo-ip>:/tmp/
+ssh root@<nuevo-ip> "tar xzf /tmp/openwa-sessions.tar.gz -C ~/.hermes/OpenWA/data/sessions/"
+
+# Postgres (OmniReport)
+scp backups/<fecha>/omnireport-pg-dump.sql root@<nuevo-ip>:/tmp/
+ssh root@<nuevo-ip> "docker exec -i omnireport-postgres-1 psql -U quotedme < /tmp/omnireport-pg-dump.sql"
+```
+
+### Paso 4: Verificar
+
+```bash
+# En el nuevo server:
+docker ps --format "table {{.Names}}\t{{.Status}}"
+curl -sI https://patdilet.dev/ | head -3
+curl -sI https://jobs.patdilet.dev/ | head -3
+curl -sI https://quotedme.app/health
+curl -sI https://ctrlz.app/health
+```
+
+---
+
+## Disaster Recovery
+
+Si el VPS muere y necesito recuperar desde cero:
+
+1. **Crear VPS nuevo** en Hetzner (CPX32, Ubuntu 24.04)
+2. **Apuntar DNS** al nuevo IP
+3. **Clonar este repo**: `git clone https://github.com/patdiletx1/infra.git /opt/infra`
+4. **Restaurar secrets**: copiar `.env` desde el último backup (`backups/<fecha>/`)
+5. **Ejecutar setup**: `bash /opt/infra/setup.sh`
+6. **Restaurar datos**: `state.db`, Postgres dump, WhatsApp sessions
+7. **Verificar**: `curl -sI https://patdilet.dev/` → 200
+
+Tiempo estimado: **30-45 minutos** (asumiendo backups recientes).
+
+---
+
+## Actualizar configs desde el server actual
 
 ## Datos y Backup
 
@@ -99,7 +242,7 @@ cd /Volumes/M2\ SSD/Repos/PDL/infra
 bash backup.sh
 ```
 
-Esto descarga todo a `./backups/<fecha>/`. Los `.env` con secretos reales se incluyen en el backup — **NUNCA los commitees.**
+Esto descarga todo a `./backups/<fecha>/`. Los `.env` con secretos reales se incluyen en el backup — **NUNCA los commits.**
 
 ### Migrar a otro server
 
